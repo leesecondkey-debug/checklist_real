@@ -1,95 +1,122 @@
 import streamlit as st
-from datetime import datetime
+import pandas as pd
+import re
 
-st.set_page_config(page_title="산재 관할 및 담당자 세부 조회기", layout="wide")
+st.set_page_config(page_title="산재보험 관할 및 담당자 통합 검색기", layout="wide")
 
-st.title("🚀 산재보상 실무 마스터 프로그램")
+st.title("🎯 근로복지공단 전 지사 담당자 실시간 검색기")
+st.caption("업로드된 '근복단.txt' 데이터베이스를 기반으로 작동하는 산재보상직원 전용 업무 툴입니다.")
 
-# --- 1. 근로복지공단 데이터베이스 (보내주신 공단 분장 구조 기반 설계) ---
-branch_detailed_db = {
-    "수원지사 (수원시 / 화성시 현장)": {
-        "최초 신청 (최초요양·재해조사)": {
-            "부서명": "재활보상1부 (재해조사 및 최초결정)",
-            "분정안내": "💡 최초요양신청서는 재해 발생 현장 소재지의 '구' 단위 및 '질병/사고' 유형별 순번제로 담당자가 배정됩니다.",
-            "세부분류": {
-                "팔달구 / 영통구 소재 사업장 (사고성 재해)": {
-                    "담당": "재해조사 1파트 (팔달/영통 사고 전담)", "내선": "031-229-0211", "팩스": "0505-123-1001", "업무": "팔달구, 영통구 관내 사업장 사고성 최초요양 재해조사 및 승인"
-                },
-                "장안구 / 권선구 소재 사업장 (사고성 재해)": {
-                    "담당": "재해조사 2파트 (장안/권선 사고 전담)", "내선": "031-229-0215", "팩스": "0505-123-1002", "업무": "장안구, 권선구 관내 사업장 사고성 최초요양 재해조사 및 승인"
-                },
-                "화성시 관내 사업장 (사고성 재해)": {
-                    "담당": "재해조사 3파트 (화성 지역 전담)", "내선": "031-229-0220", "팩스": "0505-123-1003", "업무": "화성시 소재 사업장 사고성 최초요양 접수 및 조사 승인"
-                },
-                "업무상 질병 (근골격계 / 뇌심혈관계 등 공통)": {
-                    "담당": "질병조사 전문 파트 (순번제 처리)", "내선": "031-229-0230", "팩스": "0505-123-1004", "업무": "수원/화성 관내 최초 요양 중 근골격계, 난청, 뇌심 등 업무상질병 조사 및 판정위원회 이송"
-                }
-            }
-        },
-        "승인 이후 신청 (휴업·장해·재요양 등 기속급여)": {
-            "부서명": "재활보상2부 (요양관리 및 지급)",
-            "분정안내": "💡 이미 승인된 재해자의 후속 청구는 '급여 종류' 및 '치료 중인 의료기관' 등에 따라 담당자가 쪼개집니다.",
-            "세부분류": {
-                "휴업급여 청구 (2회분 이후 지급)": {
-                    "담당": "휴업급여 지급 파트 (재해자 주민번호 순번제)", "내선": "031-229-0310", "팩스": "0505-123-2001", "업무": "1회분 이후 휴업급여 청구서 심사, 평균임금 증감 및 상병보상연금 관리"
-                },
-                "장해급여 청구 / 장해등급 심사": {
-                    "담당": "장해 심사 전문 파트 (지급결정 및 재평가)", "내선": "031-229-0325", "팩스": "0505-123-2002", "업무": "치료 종결 재해자 장해등급 사정, 장해지급결정, 간병급여 재평가"
-                },
-                "재요양 신청 / 추가상병 청구": {
-                    "담당": "요양재활 파트 (치료 의료기관별 담당)", "내선": "031-229-0340", "팩스": "0505-123-2003", "업무": "수원 관내 주요 산재지정 병원(수원의료원 등) 관리, 재요양 및 내고정물 제거 신청 심사"
-                },
-                "요양비 청구 (이종요양비 / 대체청구)": {
-                    "담당": "진료비 심사 파트", "내선": "031-229-0350", "팩스": "0505-123-2004", "업무": "재해자가 자비로 지출한 영수증(약제비, 처치료 등) 내역 심사 및 대체청구 처리"
-                }
-            }
-        }
-    }
-}
-
-# 화면 레이아웃 분할
-left_col, right_col = st.columns([1, 1], gap="large")
-
-# ----------------- 왼쪽: 세부 관할 분장 동적 조회기 -----------------
-with left_col:
-    st.header("🏢 근로복지공단 업무별 담당자 조회")
-    st.write("재해자의 현장 위치와 산재 단계를 선택하면 담당 부서가 자동으로 매핑됩니다.")
+# --- 1. 근복단.txt 원본 데이터 실시간 파싱 함수 ---
+@st.cache_data
+def load_kcomwel_data():
+    raw_records = []
+    current_branch = "미확인 지사"
     
-    # 1. 지사 선택
-    selected_branch = st.selectbox("1. 해당 지역(지사)을 선택하세요", list(branch_detailed_db.keys()))
-    
-    if selected_branch:
-        st.markdown("---")
-        # 2. 최초요양 vs 기속급여 단계 선택
-        stages = branch_detailed_db[selected_branch]
-        selected_stage = st.radio("2. 신청할 산재 단계를 선택하세요", list(stages.keys()))
+    try:
+        with open("근복단.txt", "r", encoding="utf-8") as f:
+            for line in f:
+                line_str = line.strip()
+                if not line_str:
+                    continue
+                
+                # '지사명\t영월지사' 또는 '지사명\t서울지역본부' 형태에서 지사명 추출
+                if "지사명" in line_str and "\t" in line_str:
+                    parts = line_str.split("\t")
+                    if len(parts) >= 2:
+                        current_branch = parts[1].strip()
+                        continue
+                
+                # 부서 데이터 라인 파싱 (부서 / 내선번호 / 담당업무 / 세부내역 순)
+                # 탭(\t)으로 구분된 실제 공단 인적 자원 레이아웃 분석 반영
+                if "\t" in line_str:
+                    cols = line_str.split("\t")
+                    # 유효한 연락처/업무 라인 형태 필터링
+                    if len(cols) >= 3 and any(dept in cols[0] for dept in ["재활보상", "경영복지", "가입지원", "진폐보상"]):
+                        dept_name = cols[0].strip()
+                        
+                        # 연락처와 업무 텍스트 매핑
+                        phone_or_fax = cols[1].strip()
+                        biz_type = cols[2].strip()
+                        detail_desc = cols[3].strip() if len(cols) > 3 else ""
+                        
+                        raw_records.append({
+                            "관할지사": current_branch,
+                            "담당부서": dept_name,
+                            "연락처/팩스": phone_or_fax,
+                            "담당업무": biz_type,
+                            "세부 담당 구역 및 의료기관 기준": detail_desc
+                        })
+    except FileNotFoundError:
+        st.error("⚠️ '근복단.txt' 파일을 찾을 수 없습니다. 바탕화면(Desktop)에 해당 파일이 함께 있는지 확인해 주세요.")
+        return pd.DataFrame()
+    except Exception as e:
+        st.error(f"데이터 로딩 중 오류 발생: {e}")
+        return pd.DataFrame()
         
-        if selected_stage:
-            stage_info = stages[selected_stage]
+    return pd.DataFrame(raw_records)
+
+# 데이터 로드
+df_db = load_kcomwel_data()
+
+if not df_db.empty:
+    # ----------------- 메인 기능: 키보드 통합 검색창 -----------------
+    st.markdown("### 🔍 키보드로 관할 지역, 구, 또는 급여 종류를 입력하세요")
+    
+    # 노무사님이 마우스 클릭 없이 바로 타이핑할 수 있는 검색창
+    search_query = st.text_input(
+        "검색어 입력 예시: '수원시', '구로구', '휴업급여', '장해', '재요양', '팔달구'", 
+        placeholder="여기에 검색어를 타이핑하고 엔터를 누르세요..."
+    )
+    
+    st.markdown("---")
+    
+    if search_query:
+        # 키보드로 입력한 검색어가 관할지사, 부서명, 담당업무, 세부구역 내용 중 하나라도 포함되어 있으면 실시간 필터링
+        filtered_df = df_db[
+            df_db['관할지사'].str.contains(search_query, case=False, na=False) |
+            df_df['담당부서'].str.contains(search_query, case=False, na=False) |
+            df_db['담당업무'].str.contains(search_query, case=False, na=False) |
+            df_db['세부 담당 구역 및 의료기관 기준'].str.contains(search_query, case=False, na=False)
+        ]
+        
+        total_count = len(filtered_df)
+        
+        if total_count > 0:
+            st.success(f"🎯 '{search_query}'(으)로 총 {total_count}건의 공단 담당 분정 내역이 검색되었습니다.")
             
-            # 부서 정보 강조 출력
-            st.markdown(f"### 📍 담당 부서: `{stage_info['부서명']}`")
-            st.caption(stage_info['분정안내'])
-            
-            # 3. 세부 구역 또는 급여 종류 선택 (여기서 질문하신 내용이 동적으로 갈라집니다)
-            sub_categories = stage_info["세부분류"]
-            selected_sub = st.selectbox(
-                "3. 세부 기준을 선택하세요 (최초는 '구역별', 이후는 '급여별')", 
-                list(sub_categories.keys())
+            # 검색 결과를 가독성 좋은 데이터프레임 표로 전면 배치
+            st.dataframe(
+                filtered_df, 
+                use_container_width=True,
+                column_config={
+                    "연락처/팩스": st.column_config.TextColumn("📞 직통번호 / 📠 팩스"),
+                    "세부 담당 구역 및 의료기관 기준": st.column_config.TextColumn("📋 상세 분장 (구역/의료기관/이름순)")
+                }
             )
             
-            if selected_sub:
-                final_match = sub_categories[selected_sub]
-                
-                # 최종 결과 카드 출력
-                st.success(f"🎯 **담당 파트:** {final_match['담당']}")
-                
-                # 메인 가이드 박스
-                st.info(f"📋 **주요 담당 업무:**\n{final_match['업무']}")
-                
-                # 실무 연락처 정보 (팩스는 전자팩스 0505 양식)
-                st.warning(f"📞 **직통 내선:** {final_match['내선']}  |  📠 **지정 전자팩스:** {final_match['팩스']}")
-                
-                # 꿀기능: 발급신청서나 공문에 바로 복사해서 붙여넣을 수 있는 텍스트 자동생성
-                st.subheader("✍️ 서식 기재용 텍스트 복사박스")
-                st.code(f"수신처: 근로복지공단 {selected_branch.split(' ')[0]} {stage_info['부서명']}\n팩스번호: {final_match['팩스']}", language="text")
+            # 선택적 상세 뷰어 기능 추가
+            st.markdown("### 🔍 한눈에 상세 보기 (선택 목록)")
+            for idx, row in filtered_df.iterrows():
+                with st.expander(f"📍 [{row['관할지사']}] {row['담당부서']} - {row['담당업무']}"):
+                    st.markdown(f"**📞 연락처/팩스:** {row['연락처/팩스']}")
+                    st.markdown(f"**📋 상세 분정 구조:** {row['세부 담당 구역 및 의료기관 기준']}")
+        else:
+            st.warning(f"❌ 데이터베이스에서 '{search_query}'에 매칭되는 담당 업무를 찾지 못했습니다. 단어를 다시 확인해 주세요.")
+            
+    else:
+        # 아무것도 입력하지 않았을 때는 전체 데이터베이스의 규모를 브리핑하고 샘플 출력
+        st.info("💡 위 검색창에 단어를 입력하시면 즉시 관할 지사 및 담당 파트가 필터링됩니다.")
+        
+        st.markdown("#### 📊 현재 로드된 공단 지사별 데이터셋 전체 요약")
+        summary_df = df_db['관할지사'].value_counts().reset_index()
+        summary_df.columns = ['관할지사', '등록된 담당 분장 수']
+        
+        col1, col2 = st.columns([1, 2])
+        with col1:
+            st.dataframe(summary_df, use_container_width=True)
+        with col2:
+            st.write("▼ 전체 데이터베이스 샘플 (일부)")
+            st.dataframe(df_db.head(15), use_container_width=True)
+else:
+    st.info("데이터베이스가 비어있거나 '근복단.txt' 형식을 읽는 중입니다.")
