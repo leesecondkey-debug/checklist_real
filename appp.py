@@ -39,7 +39,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🛡️ 산재 최초승인 의사결정 시뮬레이터")
+st.title("산재 최초승인 의사결정 시뮬레이터")
 
 # --- [입력 섹션] ---
 with st.sidebar:
@@ -78,7 +78,7 @@ if not is_frequent:
     relevance_level = st.radio("다빈도 미해당 시: 특별진찰 결과 업무관련성", ["높음", "낮음"], horizontal=True)
 
 # --- [도식화 및 경로 표현] ---
-st.subheader("📊 프로세스 경로 추적")
+st.subheader("😻프로세스 경로 파악😻")
 
 # 경로 상태 정의
 s1 = True # 시작
@@ -118,7 +118,7 @@ with c5:
 
 # --- [결과 및 데이터 리스트] ---
 st.divider()
-st.subheader("📋 상세 진단 결과 및 원천 데이터")
+st.subheader("📋 상세 진단 결과 및 원데이터")
 
 res_col1, res_col2 = st.columns([1, 2])
 
